@@ -1,0 +1,145 @@
+/*IDENTIFY MISSING VALUES */
+proc format;
+   value $missfmt ' ' = ‘Missing’ other=‘Not Missing’;
+   value missfmt . = ‘Missing’ other =‘Not Missing’;
+run;
+proc freq data=hw.insurance_t_bin;
+   format _CHAR_ $missfmt.;
+   tables _CHAR_ / missing missprint nocum nopercent;
+   format _NUMERIC_ missfmt.;
+   tables _NUMERIC_ / missing missprint nocum nopercent;
+run;
+
+/*Variables with missing values: Investment, Credit Card, Credit Card Purchases, Owns Home*/
+
+/*Identify linear separation: problem variables are identified in commented statements*/
+PROC freq data=work.train;
+    tables INS*INCOME_BIN;
+    tables INS*INV;
+    tables INS*INVBAL_BIN;
+    tables INS*IRA;
+    tables INS*IRABAL_BIN;
+    tables INS*LOC;
+    tables INS*LOCBAL_BIN;
+    tables INS*LORES_BIN;
+    tables INS*MM;
+    tables INS*MMBAL_BIN;
+    *MMCRED;
+    tables INS*MMCRED;
+    tables INS*MOVED;
+    tables INS*MTG;
+    tables INS*MTGBAL_BIN;
+    tables INS*NSF;
+    tables INS*NSFAMT_BIN;
+    tables INS*PHONE_BIN;
+    tables INS*POS_BIN;
+    tables INS*POSAMT_BIN;
+    tables INS*SAV;
+    tables INS*SAVBAL_BIN;
+    tables INS*SDB;
+    tables INS*TELLER_BIN;
+RUN;
+    
+
+proc freq data=work.train;
+tables CCPUR_miss*INS;
+   tables HM_miss*INS;
+   tables ACCTAGE_Bin*INS;
+   tables AGE_Bin*INS;
+   tables ATM*INS;
+   tables ATMAMT_Bin*INS;
+   *cashbk;
+   tables CASHBK*INS;
+   tables CC*INS;
+   tables CCBAL_BIN*INS;
+   tables CCPURC*INS;
+   tables CD*INS;
+   tables CDBAL_BIN*INS;
+   tables CHECKS_BIN*INS;
+   tables CRSCORE_BIN*INS;
+   tables DDA*INS;
+   tables DDABAL_Bin*INS;
+   tables DEPAMT_Bin*INS;
+   tables DIRDEP*INS;
+   tables HMOWN*INS;
+   tables HMVAL_BIN*INS;
+   tables ILS*INS;
+   tables ILSBAL_BIN*INS;
+   tables INAREA*INS;
+run;
+
+/* Impute missing values by converting columns to categorical and adding category 'M' */    
+data ins_train1;
+    set hw.insurance_t_bin;
+    INV_c = put(INV, 2.);
+    CC_c = put(CC, 2.);
+    CCPURC_c = put(CCPURC, 2.);
+    HMOWN_c = put(HMOWN, 2.);
+    if INV = " " then Inv_c = 'M';
+    else INV_c = INV;
+    if CC = " " then CC_c = 'M';
+    else CC_c = CC;
+    if CCPURC = " " then CCPUR_c = 'M';
+    else CCPUR_c = CCPURC;
+    if HMOWN = " " then HMOWN_c = 'M';
+    else HMOWN_c = HMOWN;
+run;
+
+/*adjust quasi-sep variables*/
+data ins_train;
+set ins_train1;
+cashbk_c = put(cashbk, 2.);
+    if cashbk > 0
+    then cashbk_c = '1+';
+mmcred_c = put(mmcred, 2.);
+    if mmcred > 1
+    then mmcred_c = '2+';
+run;
+
+/*show difference in values of variables after fixing for separation*/
+proc freq data=hw.train;
+    tables cashbk cashbk_c mmcred mmcred_c;
+run;
+
+/*Inspect Bin variables*/
+proc freq data=ins_train;
+    tables ACCTAGE_Bin AGE_Bin ATMAMT_Bin CCBAL_BIN CDBAL_BIN CHECKS_BIN CRSCORE_BIN
+    DDABAL_BIN DEPAMT_BIN HMVAL_BIN ILSBAL_BIN INCOME_BIN INVBAL_BIN  IRABAL_BIN
+    LOCBAL_BIN LORES_BIN MMBAL_BIN MTGBAL_BIN NSFAMT_BIN PHONE_BIN POS_BIN POSAMT_BIN
+    SAVBAL_BIN TELLER_BIN;
+run;
+
+/* Create a macro for binned variables */
+%let Bin_vars = ACCTAGE_Bin AGE_Bin ATMAMT_Bin CCBAL_BIN CDBAL_BIN CHECKS_BIN CRSCORE_BIN
+    DDABAL_BIN DEPAMT_BIN HMVAL_BIN ILSBAL_BIN INCOME_BIN INVBAL_BIN  IRABAL_BIN
+    LOCBAL_BIN LORES_BIN MMBAL_BIN MTGBAL_BIN NSFAMT_BIN PHONE_BIN POS_BIN POSAMT_BIN
+    SAVBAL_BIN TELLER_BIN;
+
+/* Create a macro for binary variables */    
+%let Binary = ATM CCBAL_BIN CD DDA DIRDEP ILS INAREA IRA LOC MM MOVED MTG NSF SAV SDB;
+
+/*backward selection for main effects*/
+proc logistic data=ins_train plots(only)=(oddsratio);
+    class branch(ref='B1') res(ref='R') cashbk_c(ref='0') mmcred_c(ref='0')
+    CCPURC_c(ref='0') CC_c(ref='0') HMOWN_c(ref='0') INV_c(ref='0')
+    &Bin_vars(ref='1') / param=ref;
+model INS(event='1') = branch res mmcred_c cashbk_c ccpurc_c cc_c hmown_c inv_c  &Bin_vars &Binary / selection=backward slstay=0.002
+                      	clodds=pl clparm=pl;
+run;
+quit;
+
+/*forward selection for interaction terms*/
+
+/*define all model variables */
+%let main_vars =  BRANCH | CC_C | INV_C | ATMAMT_BIN | CDBAL_BIN | CHECKS_BIN | DDABAL_BIN | MMBAL_BIN | SAVBAL_Bin | TELLER_Bin | DDA | ILS | IRA | NSF;
+
+/*define bin variables to simplify class statement below */
+%let bin_model = ATMAMT_BIN CDBAL_BIN CHECKS_BIN DDABAL_BIN MMBAL_BIN SAVBAL_BIN TELLER_BIN;
+
+proc logistic data=ins_train plots(only)=(oddsratio);
+    CLASS branch(ref='B1') cc_c(ref='0') INV_c(ref='0') &bin_model(ref='1');
+    model INS(event='1') = &main_vars @2/ selection=forward slentry=0.002
+                      	clodds=pl clparm=pl;   
+run;
+quit;
+
